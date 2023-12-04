@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using Colossal.UI;
 using Game.SceneFlow;
@@ -7,9 +7,9 @@ using Game.UI.Menu;
 using HarmonyLib;
 using System.Reflection.Emit;
 using Game;
-using MyCoolMod.Systems;
+using BuildingOccupancyRebalancing.Systems;
 
-namespace MyCoolMod.Patches {
+namespace BuildingOccupancyRebalancing.Patches {
 
     // This example patch adds the loading of a custom ECS System after the AudioManager has
     // its "OnGameLoadingComplete" method called. We're just using it as a entrypoint, and
@@ -23,7 +23,7 @@ namespace MyCoolMod.Patches {
                 return;
 
             // Here we add our custom ECS System to the game's ECS World, so it's "online" at runtime
-            __instance.World.GetOrCreateSystem<MyCoolModSystem>();
+            __instance.World.GetOrCreateSystem<BuildingOccupancyRebalancingSystem>();
         }
     }
 

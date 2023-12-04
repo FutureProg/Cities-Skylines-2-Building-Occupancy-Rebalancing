@@ -8,22 +8,23 @@ using HarmonyLib;
 using System.Reflection.Emit;
 using Game;
 using BuildingOccupancyRebalancing.Systems;
+using Unity.Entities;
 
 namespace BuildingOccupancyRebalancing.Patches {
 
     // This example patch adds the loading of a custom ECS System after the AudioManager has
     // its "OnGameLoadingComplete" method called. We're just using it as a entrypoint, and
     // it won't affect anything related to audio.
-    [HarmonyPatch(typeof(AudioManager), "OnGameLoadingComplete")]
-    class AudioManager_OnGameLoadingComplete
+    [HarmonyPatch(typeof(AudioManager), "OnCreate")]
+    class AudioManager_OnCreate
     {
-        static void Postfix(AudioManager __instance, Colossal.Serialization.Entities.Purpose purpose, GameMode mode)
+        static void Postfix(AudioManager __instance)
         {
-            if (!mode.IsGameOrEditor())
-                return;
+            // if (!mode.IsGameOrEditor())
+            //     return;
 
             // Here we add our custom ECS System to the game's ECS World, so it's "online" at runtime
-            __instance.World.GetOrCreateSystem<BuildingOccupancyRebalancingSystem>();
+            ((ComponentSystemBase)__instance).World.GetOrCreateSystemManaged<UpdateSystem>().UpdateAt<BuildingOccupancyRebalancingSystem>((SystemUpdatePhase)1);
         }
     }
 

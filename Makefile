@@ -10,6 +10,9 @@ restore:
 build: clean restore
 	@dotnet build /p:BepInExVersion=$(BEPINEX_VERSION)
 
+run: 
+	E:\SteamLibrary\steamapps\common\Cities Skylines II\Cities2.exe
+
 package-win:
 	@-mkdir dist
 	@cmd /c copy /y "bin\Debug\netstandard2.1\0Harmony.dll" "dist\"

@@ -28,16 +28,16 @@ namespace BuildingOccupancyRebalancing.Patches {
     }
 
     // This example patch enables the editor in the main menu
-    [HarmonyPatch(typeof(MenuUISystem), "IsEditorEnabled")]
-    class MenuUISystem_IsEditorEnabledPatch
-    {
-        static bool Prefix(ref bool __result)
-        {
-            __result = true;
+    // [HarmonyPatch(typeof(MenuUISystem), "IsEditorEnabled")]
+    // class MenuUISystem_IsEditorEnabledPatch
+    // {
+    //     static bool Prefix(ref bool __result)
+    //     {
+    //         __result = true;
 
-            return false; // Ignore original function
-        }
-    }
+    //         return false; // Ignore original function
+    //     }
+    // }
     // Thanks to @89pleasure for the MenuUISystem_IsEditorEnabledPatch snippet above
     // https://github.com/89pleasure/cities2-mod-collection/blob/71385c000779c23b85e5cc023fd36022a06e9916/EditorEnabled/Patches/MenuUISystemPatches.cs
 }

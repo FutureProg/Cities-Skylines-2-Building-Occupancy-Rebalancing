@@ -1,4 +1,5 @@
-﻿using Game;
+﻿using Colossal.Serialization.Entities;
+using Game;
 using Game.Audio;
 using Game.Prefabs;
 using Game.Simulation;
@@ -15,24 +16,30 @@ namespace BuildingOccupancyRebalancing.Systems
 
         protected override void OnCreate()
         {
-            base.OnCreate();
-            CreateKeyBinding();
+            base.OnCreate();            
             // Example on how to get a existing ECS System from the ECS World
             // this.simulation = World.GetExistingSystemManaged<SimulationSystem>();
+            Debug.Log("Created Building Occupancy Rebalancing System");
         }
 
-        private void CreateKeyBinding()
+        protected override void OnGameLoadingComplete(Purpose purpose, GameMode mode)
         {
-            var inputAction = new InputAction("MyModHotkeyPress");
-            inputAction.AddBinding("<Keyboard>/n");
-            inputAction.performed += OnHotkeyPress;
-            inputAction.Enable();
+            base.OnGameLoadingComplete(purpose, mode);
+            UnityEngine.Debug.Log("Game has loaded!");
         }
 
-        private void OnHotkeyPress(InputAction.CallbackContext obj)
-        {
-            UnityEngine.Debug.Log("You pressed the hotkey, very cool! Good job matey");
-        }
+        // private void CreateKeyBinding()
+        // {
+        //     var inputAction = new InputAction("MyModHotkeyPress");
+        //     inputAction.AddBinding("<Keyboard>/n");
+        //     inputAction.performed += OnHotkeyPress;
+        //     inputAction.Enable();
+        // }
+
+        // private void OnHotkeyPress(InputAction.CallbackContext obj)
+        // {
+        //     UnityEngine.Debug.Log("You pressed the hotkey, very cool! Good job matey");
+        // }
 
         protected override void OnUpdate() {}
     }

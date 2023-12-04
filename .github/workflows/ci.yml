@@ -1,4 +1,4 @@
-name: mycoolmod-ci
+name: building-occupancy-rebalancing-ci
 
 on:
   push:

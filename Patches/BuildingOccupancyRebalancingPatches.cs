@@ -24,7 +24,7 @@ namespace BuildingOccupancyRebalancing.Patches {
             //     return;
 
             // Here we add our custom ECS System to the game's ECS World, so it's "online" at runtime
-            ((ComponentSystemBase)__instance).World.GetOrCreateSystemManaged<UpdateSystem>().UpdateAt<BuildingOccupancyRebalancingSystem>((SystemUpdatePhase)1);
+            ((ComponentSystemBase)__instance).World.GetOrCreateSystemManaged<UpdateSystem>().UpdateAt<BuildingOccupancyRebalancingSystem>(SystemUpdatePhase.LateUpdate);
         }
     }
 

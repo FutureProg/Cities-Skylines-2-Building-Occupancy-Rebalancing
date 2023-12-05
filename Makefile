@@ -11,7 +11,7 @@ build: clean restore
 	@dotnet build /p:BepInExVersion=$(BEPINEX_VERSION)
 
 run: 
-	E:\SteamLibrary\steamapps\common\Cities Skylines II\Cities2.exe
+	E:\SteamLibrary\steamapps\common\Cities Skylines II\Cities2.exe -developerMode
 
 package-win:
 	@-mkdir dist

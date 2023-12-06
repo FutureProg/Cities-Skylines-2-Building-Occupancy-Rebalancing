@@ -32,7 +32,7 @@ namespace BuildingOccupancyRebalancing.Systems
 
         public override int GetUpdateInterval(SystemUpdatePhase phase)
 		{
-			return 64;
+			return 64; // same as BuildingConstructionSystem
 		}
 
         protected override void OnCreate()

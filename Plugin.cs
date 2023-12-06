@@ -20,7 +20,7 @@ namespace BuildingOccupancyRebalancing
     public class Plugin : BaseUnityPlugin
     {
 
-        internal static new ManualLogSource Log;
+        internal static ManualLogSource Log;
 
         private void Awake()
         {

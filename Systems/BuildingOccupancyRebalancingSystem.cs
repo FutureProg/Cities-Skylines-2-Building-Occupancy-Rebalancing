@@ -10,6 +10,7 @@ using Unity.Burst.Intrinsics;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Jobs;
+using Unity.Mathematics;
 using UnityEngine;
 
 namespace BuildingOccupancyRebalancing.Systems
@@ -26,6 +27,8 @@ namespace BuildingOccupancyRebalancing.Systems
         ComponentLookup<BuildingPropertyData> m_buildingPropertyDataLookup;
         ComponentLookup<SpawnableBuildingData> m_spawnableBuildingDataLookup;
         ComponentLookup<ZoneData> m_zoneDataLookup;
+        ComponentLookup<ObjectGeometryData> m_objectGeometryLookup;
+        ComponentLookup<BuildingData> m_buildingDataLookup;        
 
         private EndFrameBarrier m_endFrameBarrier;
         bool m_active;
@@ -53,6 +56,8 @@ namespace BuildingOccupancyRebalancing.Systems
             m_buildingPropertyDataLookup = GetComponentLookup<BuildingPropertyData>(false);
             m_spawnableBuildingDataLookup = GetComponentLookup<SpawnableBuildingData>(true);
             m_zoneDataLookup = GetComponentLookup<ZoneData>(true);
+            m_objectGeometryLookup = GetComponentLookup<ObjectGeometryData>(true);
+            m_buildingDataLookup = GetComponentLookup<BuildingData>(true);            
 
             m_active = false;
             m_endFrameBarrier = World.GetOrCreateSystemManaged<EndFrameBarrier>();
@@ -89,6 +94,8 @@ namespace BuildingOccupancyRebalancing.Systems
             m_spawnableBuildingDataLookup.Update(this);
             m_buildingPropertyDataLookup.Update(this);
             m_zoneDataLookup.Update(this);        
+            m_objectGeometryLookup.Update(this);
+            m_buildingDataLookup.Update(this);            
 
             var commandBuffer = m_endFrameBarrier.CreateCommandBuffer().AsParallelWriter();             
             var job = new UpdateResidenceOccupancyJob {
@@ -99,7 +106,9 @@ namespace BuildingOccupancyRebalancing.Systems
                 underConstructionHandle = m_underConstructionHandle,
                 spawnableBuildingDataLookup = m_spawnableBuildingDataLookup,
                 buildingPropertyDataLookup = m_buildingPropertyDataLookup,
-                zoneDataLookup = m_zoneDataLookup
+                zoneDataLookup = m_zoneDataLookup,
+                objectGeometryLookup = m_objectGeometryLookup,
+                buildingDataLookup = m_buildingDataLookup                
             };                        
             this.Dependency = job.ScheduleParallel(m_Query, this.Dependency);            
             m_endFrameBarrier.AddJobHandleForProducer(Dependency);            
@@ -115,12 +124,17 @@ namespace BuildingOccupancyRebalancing.Systems
             public ComponentLookup<BuildingPropertyData> buildingPropertyDataLookup;
             public ComponentLookup<SpawnableBuildingData> spawnableBuildingDataLookup;
             public ComponentLookup<ZoneData> zoneDataLookup;
+            public ComponentLookup<ObjectGeometryData> objectGeometryLookup;
+            public ComponentLookup<BuildingData> buildingDataLookup;            
 
             public EntityCommandBuffer.ParallelWriter commandBuffer;
 
             [BurstCompile]
             public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
             {   
+                // Only doing this for High Density Office and High/Medium density residential
+                // because we can't find the size of the actual building without looking at the mesh.
+                // Will look for mesh access later on.
                 var isResidential = chunk.Has(ref residentialPropertyHandle);
                 var isOffice = chunk.Has(ref officePropertyHandle);
                 if (!isResidential) {
@@ -138,23 +152,46 @@ namespace BuildingOccupancyRebalancing.Systems
                         continue;                    
                     }
                     if (!buildingPropertyDataLookup.TryGetComponent(prefab, out var property) ||
-                        !spawnableBuildingDataLookup.TryGetComponent(prefab, out var buildingData)) {
+                        !spawnableBuildingDataLookup.TryGetComponent(prefab, out var spawnBuildingData) ||
+                        !buildingDataLookup.TryGetComponent(prefab, out var buildingData) ||
+                        !zoneDataLookup.TryGetComponent(spawnBuildingData.m_ZonePrefab, out var zonedata)) {
                         Plugin.Log.LogInfo("No Building Property Data");
                         continue;                        
                     }            
 
-                    if (property.m_ResidentialProperties != 2) {                        
-                        property.m_ResidentialProperties = 2;
-                        commandBuffer.SetComponent(unfilteredChunkIndex, prefab, property);
-                    }                                        
-                    Plugin.Log.LogInfo("Building Data Level: " + buildingData.m_Level);
-                    if (buildingData.m_ZonePrefab != Entity.Null && 
-                        zoneDataLookup.TryGetComponent(buildingData.m_ZonePrefab, out var zonedata)) {                                                
-                        Plugin.Log.LogInfo("Zone AreaType " + zonedata.m_AreaType);
-                        Plugin.Log.LogInfo("Zone MaxHeight " + zonedata.m_MaxHeight);
-                        Plugin.Log.LogInfo("Zone ZoneFlags " + zonedata.m_ZoneFlags.ToString());
-                        Plugin.Log.LogInfo("Zone ZoneType Index" + zonedata.m_ZoneType.m_Index);
+                    // Set the data
+                    if(!objectGeometryLookup.TryGetComponent(prefab, out var geom)) {
+                        Plugin.Log.LogInfo("No Object Geometry");
+                        continue;
                     }
+                    Plugin.Log.LogInfo($"Object Geometry: x {geom.m_Size.x}, y {geom.m_Size.y}, z {geom.m_Size.z}");
+                    Plugin.Log.LogInfo($"Building Lot Size: x {buildingData.m_LotSize.x}, y {buildingData.m_LotSize.y}");                    
+                    Plugin.Log.LogInfo($"Default Residences {property.m_ResidentialProperties}");
+                    var RESIDENTIAL_HEIGHT = 4;// 4 Metre Floor Height for residences (looks like the vanilla height)
+                    var OFFICE_HEIGHT = 4;// 4 Metre Floor Height for offices                                        
+                    bool is_singleFamilyResidence = property.m_ResidentialProperties == 1; // Probably safe assumption to make until we find something else      
+                    if (is_singleFamilyResidence) {
+                        continue;
+                    }            
+                    float width = geom.m_Size.x;
+                    float length = geom.m_Size.z;
+                    float height = geom.m_Size.y;
+                    bool is_RowHome = zonedata.m_ZoneFlags.HasFlag(ZoneFlags.SupportNarrow);
+                    if (is_RowHome) {                      
+                        property.m_ResidentialProperties = (int)math.floor((height/RESIDENTIAL_HEIGHT) * 1.5f);// For Row Homes max 1.5 residences per floor. No basement                                                   
+                        commandBuffer.SetComponent(unfilteredChunkIndex, prefab, property);
+                    } else {
+                        var floorSize = width * length;
+                        var floorUnits = (int) math.floor(floorSize/60); // For Medium & High Density, for now, we'll assume that there's one unit per 60 metres ()
+                        var floorCount = (int)math.floor(height/RESIDENTIAL_HEIGHT); 
+                        property.m_ResidentialProperties = floorUnits * floorCount;
+                    }                                               
+                    Plugin.Log.LogInfo("Building Data Level: " + spawnBuildingData.m_Level);                    
+                    Plugin.Log.LogInfo("Zone AreaType " + zonedata.m_AreaType);
+                    Plugin.Log.LogInfo("Zone MaxHeight " + zonedata.m_MaxHeight);
+                    Plugin.Log.LogInfo("Zone ZoneFlags " + zonedata.m_ZoneFlags.ToString());
+                    Plugin.Log.LogInfo("Zone ZoneType Index" + zonedata.m_ZoneType.m_Index);                    
+                    Plugin.Log.LogInfo("====");
                 }
             }
         }

@@ -8,6 +8,7 @@ using HarmonyLib;
 using System.Collections.Generic;
 using System.Text;
 using UnityEngine;
+using BepInEx.Logging;
 
 #if BEPINEX_V6
     using BepInEx.Unity.Mono;
@@ -18,8 +19,12 @@ namespace BuildingOccupancyRebalancing
     [BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
     public class Plugin : BaseUnityPlugin
     {
+
+        internal static new ManualLogSource Log;
+
         private void Awake()
         {
+            Log = base.Logger;
             Logger.LogInfo($"Plugin {MyPluginInfo.PLUGIN_GUID} is loaded!");
 
             var harmony = Harmony.CreateAndPatchAll(Assembly.GetExecutingAssembly(), MyPluginInfo.PLUGIN_GUID + "_Cities2Harmony");
@@ -29,7 +34,7 @@ namespace BuildingOccupancyRebalancing
 
             foreach (var patchedMethod in patchedMethods) {
                 Logger.LogInfo($"Patched method: {patchedMethod.Module.Name}:{patchedMethod.Name}");
-            }
+            }            
         }
 
         // Keep in mind, Unity UI is immediate mode, so OnGUI is called multiple times per frame

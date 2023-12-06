@@ -29,7 +29,8 @@ namespace BuildingOccupancyRebalancing.Systems
         ComponentLookup<SpawnableBuildingData> m_spawnableBuildingDataLookup;
         ComponentLookup<ZoneData> m_zoneDataLookup;
         ComponentLookup<ObjectGeometryData> m_objectGeometryLookup;
-        ComponentLookup<BuildingData> m_buildingDataLookup;        
+        ComponentLookup<BuildingData> m_buildingDataLookup; 
+        BufferTypeHandle<Renter> m_renterHandle;       
 
         private EndFrameBarrier m_endFrameBarrier;
         bool m_active;
@@ -53,12 +54,13 @@ namespace BuildingOccupancyRebalancing.Systems
             m_officePropertyHandle = GetComponentTypeHandle<OfficeProperty>(true);
             m_residentialPropertyHandle = GetComponentTypeHandle<ResidentialProperty>(true);
             m_underConstructionHandle = GetComponentTypeHandle<UnderConstruction>(true);
+            m_renterHandle = GetBufferTypeHandle<Renter>(false);
 
             m_buildingPropertyDataLookup = GetComponentLookup<BuildingPropertyData>(false);
             m_spawnableBuildingDataLookup = GetComponentLookup<SpawnableBuildingData>(true);
             m_zoneDataLookup = GetComponentLookup<ZoneData>(true);
             m_objectGeometryLookup = GetComponentLookup<ObjectGeometryData>(true);
-            m_buildingDataLookup = GetComponentLookup<BuildingData>(true);            
+            m_buildingDataLookup = GetComponentLookup<BuildingData>(true);                
 
             m_active = false;
             m_endFrameBarrier = World.GetOrCreateSystemManaged<EndFrameBarrier>();
@@ -96,7 +98,8 @@ namespace BuildingOccupancyRebalancing.Systems
             m_buildingPropertyDataLookup.Update(this);
             m_zoneDataLookup.Update(this);        
             m_objectGeometryLookup.Update(this);
-            m_buildingDataLookup.Update(this);            
+            m_buildingDataLookup.Update(this);      
+            m_renterHandle.Update(this);      
 
             var commandBuffer = m_endFrameBarrier.CreateCommandBuffer().AsParallelWriter();             
             var job = new UpdateResidenceOccupancyJob {
@@ -105,11 +108,12 @@ namespace BuildingOccupancyRebalancing.Systems
                 officePropertyHandle = m_officePropertyHandle,
                 residentialPropertyHandle = m_residentialPropertyHandle,
                 underConstructionHandle = m_underConstructionHandle,
+                renterHandle = m_renterHandle,
                 spawnableBuildingDataLookup = m_spawnableBuildingDataLookup,
                 buildingPropertyDataLookup = m_buildingPropertyDataLookup,
                 zoneDataLookup = m_zoneDataLookup,
                 objectGeometryLookup = m_objectGeometryLookup,
-                buildingDataLookup = m_buildingDataLookup,
+                buildingDataLookup = m_buildingDataLookup,                
                 randomSeed = RandomSeed.Next()         
             };                        
             this.Dependency = job.ScheduleParallel(m_Query, this.Dependency);            
@@ -120,14 +124,15 @@ namespace BuildingOccupancyRebalancing.Systems
         public struct UpdateResidenceOccupancyJob : IJobChunk
         {
             public ComponentTypeHandle<PrefabRef> prefabRefhandle;        
-            public ComponentTypeHandle<OfficeProperty> officePropertyHandle;        
+            public ComponentTypeHandle<OfficeProperty> officePropertyHandle;
+            public BufferTypeHandle<Renter> renterHandle;             
             public ComponentTypeHandle<ResidentialProperty> residentialPropertyHandle;
             public ComponentTypeHandle<UnderConstruction> underConstructionHandle;
             public ComponentLookup<BuildingPropertyData> buildingPropertyDataLookup;
             public ComponentLookup<SpawnableBuildingData> spawnableBuildingDataLookup;
             public ComponentLookup<ZoneData> zoneDataLookup;
             public ComponentLookup<ObjectGeometryData> objectGeometryLookup;
-            public ComponentLookup<BuildingData> buildingDataLookup;            
+            public ComponentLookup<BuildingData> buildingDataLookup;                   
 
             public EntityCommandBuffer.ParallelWriter commandBuffer;
 
@@ -157,7 +162,8 @@ namespace BuildingOccupancyRebalancing.Systems
                     }
                     if (!spawnableBuildingDataLookup.TryGetComponent(prefab, out var spawnBuildingData) ||
                         !buildingDataLookup.TryGetComponent(prefab, out var buildingData) ||
-                        !zoneDataLookup.TryGetComponent(spawnBuildingData.m_ZonePrefab, out var zonedata)) {
+                        !zoneDataLookup.TryGetComponent(spawnBuildingData.m_ZonePrefab, out var zonedata)||
+                        !buildingPropertyDataLookup.TryGetComponent(prefab, out var property)) {
                         Plugin.Log.LogInfo("No Building Data");
                         continue;                        
                     }            
@@ -171,13 +177,18 @@ namespace BuildingOccupancyRebalancing.Systems
                     float length = geom.m_Size.z;
                     float height = geom.m_Size.y;                    
                     if (isResidential) {
-                        UpdateResidential(unfilteredChunkIndex, width, length, height, random, zonedata, prefab);
+                        UpdateResidential(unfilteredChunkIndex, width, length, height, random, zonedata, property, prefab);
                     }
-                    else if (isOffice) {
+                    else if (isOffice) { // For now it'd require patching BuildingPropertyData.CountProperties, so we'll do companies per floor later
+                    // Company UI Utils also can only display one employer at a time
                         float OFFICE_HEIGHT = 4.0f;// 4 Metre Floor Height for offices      
                         float SPACE_PER_EMPLOYEE = 15; // 15 metres needed per employee
-                        float COMPANIES_PER_FLOOR = 0.5f;
+                        // float COMPANIES_PER_FLOOR = 0.5f;
                         int floorCount = (int)math.floor(height / OFFICE_HEIGHT);
+                        if (!chunk.Has(ref renterHandle)) {
+                            Plugin.Log.LogInfo("No ");
+                            continue;
+                        }
                     }
                     
                     // Plugin.Log.LogInfo($"Object Geometry: x {geom.m_Size.x}, y {geom.m_Size.y}, z {geom.m_Size.z}");
@@ -193,10 +204,10 @@ namespace BuildingOccupancyRebalancing.Systems
             }
 
             void UpdateResidential(int unfilteredChunkIndex, float width, float length, float height, Unity.Mathematics.Random random, 
-                    ZoneData zonedata, Entity prefab) {
-                if (!buildingPropertyDataLookup.TryGetComponent(prefab, out var property)) {
-                    return;
-                }
+                    ZoneData zonedata, BuildingPropertyData property, Entity prefab) {
+                // if (!buildingPropertyDataLookup.TryGetComponent(prefab, out var property)) {
+                //     return;
+                // }
                 bool is_singleFamilyResidence = property.m_ResidentialProperties == 1; // Probably safe assumption to make until we find something else                                      
                 if (is_singleFamilyResidence) {
                     // Plugin.Log.LogInfo("Skipping Single Family Residential\n=======");

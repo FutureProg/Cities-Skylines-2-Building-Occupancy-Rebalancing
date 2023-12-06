@@ -167,8 +167,9 @@ namespace BuildingOccupancyRebalancing.Systems
                     Plugin.Log.LogInfo($"Object Geometry: x {geom.m_Size.x}, y {geom.m_Size.y}, z {geom.m_Size.z}");
                     Plugin.Log.LogInfo($"Building Lot Size: x {buildingData.m_LotSize.x}, y {buildingData.m_LotSize.y}");                    
                     Plugin.Log.LogInfo($"Default Residences {property.m_ResidentialProperties}");
-                    var RESIDENTIAL_HEIGHT = 4;// 4 Metre Floor Height for residences (looks like the vanilla height)
-                    var OFFICE_HEIGHT = 4;// 4 Metre Floor Height for offices                                        
+                    float RESIDENTIAL_HEIGHT = 3.5f;// 3.5 Metre Floor Height for residences (looks like the vanilla height)
+                    float OFFICE_HEIGHT = 4.0f;// 4 Metre Floor Height for offices                     
+                    float FOUNDATION_HEIGHT = 1.0f; // Looks like that'd be it? Only using this for row homes                                       
                     bool is_singleFamilyResidence = property.m_ResidentialProperties == 1; // Probably safe assumption to make until we find something else      
                     if (is_singleFamilyResidence) {
                         continue;
@@ -177,12 +178,14 @@ namespace BuildingOccupancyRebalancing.Systems
                     float length = geom.m_Size.z;
                     float height = geom.m_Size.y;
                     bool is_RowHome = zonedata.m_ZoneFlags.HasFlag(ZoneFlags.SupportNarrow);
-                    if (is_RowHome) {                      
-                        property.m_ResidentialProperties = (int)math.floor((height/RESIDENTIAL_HEIGHT) * 1.5f);// For Row Homes max 1.5 residences per floor. No basement                                                   
+                    if (is_RowHome) {                        
+                        float floorCount = (height-FOUNDATION_HEIGHT) / RESIDENTIAL_HEIGHT;                      
+                        Plugin.Log.LogInfo($"Floor count {floorCount}");                        
+                        property.m_ResidentialProperties = (int)math.floor(math.floor(floorCount) * 1.5f);// For Row Homes max 1.5 residences per floor. No basement                                                   
                         commandBuffer.SetComponent(unfilteredChunkIndex, prefab, property);
                     } else {
                         var floorSize = width * length;
-                        var floorUnits = (int) math.floor(floorSize/60); // For Medium & High Density, for now, we'll assume that there's one unit per 60 metres ()
+                        var floorUnits = (int) math.floor(floorSize/60); // For Medium & High Density, for now, we'll assume that there's one unit per 60 square metres (600 sqft)
                         var floorCount = (int)math.floor(height/RESIDENTIAL_HEIGHT); 
                         property.m_ResidentialProperties = floorUnits * floorCount;
                     }                                               

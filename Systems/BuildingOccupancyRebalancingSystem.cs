@@ -30,6 +30,11 @@ namespace BuildingOccupancyRebalancing.Systems
         private EndFrameBarrier m_endFrameBarrier;
         bool m_active;
 
+        public override int GetUpdateInterval(SystemUpdatePhase phase)
+		{
+			return 64;
+		}
+
         protected override void OnCreate()
         {
             base.OnCreate();            

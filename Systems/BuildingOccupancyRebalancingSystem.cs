@@ -1,10 +1,12 @@
-﻿using Colossal.Serialization.Entities;
+﻿using System.Linq;
+using Colossal.Serialization.Entities;
 using Game;
 using Game.Buildings;
 using Game.Common;
 using Game.Companies;
 using Game.Objects;
 using Game.Prefabs;
+using Game.Rendering.Utilities;
 using Game.Simulation;
 using Game.Tools;
 using Unity.Burst;
@@ -12,6 +14,7 @@ using Unity.Burst.Intrinsics;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
+using Unity.Entities.UniversalDelegates;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
@@ -21,8 +24,10 @@ namespace BuildingOccupancyRebalancing.Systems
     public class BuildingOccupancyRebalancingSystem : GameSystemBase
     {        
 
-        EntityQuery m_Query; 
+        EntityQuery m_UnderConstructionQuery; 
         EntityQuery m_EmployerQuery;
+        EntityQuery m_GameStartupQuery;
+
         ComponentTypeHandle<PrefabRef> m_prefabRefhandle;        
         ComponentTypeHandle<OfficeProperty> m_officePropertyHandle;        
         ComponentTypeHandle<ResidentialProperty> m_residentialPropertyHandle;
@@ -52,12 +57,16 @@ namespace BuildingOccupancyRebalancing.Systems
             // We'll focus on getting the building while it's under construction.
             EntityQueryBuilder builder = new EntityQueryBuilder(Allocator.Temp);            
             
-            m_Query = builder.WithAll<UnderConstruction, PrefabRef>()
+            m_GameStartupQuery = builder.WithAll<PrefabRef>()
+                .WithAny<ResidentialProperty>()
+                .Build(this.EntityManager);
+            builder.Reset();                                
+
+            m_UnderConstructionQuery = builder.WithAll<UnderConstruction, PrefabRef>()
                 .WithAny<ResidentialProperty>()//, OfficeProperty>()                
                 .Build(this.EntityManager);   
-            builder.Dispose();
-            
-            builder = new EntityQueryBuilder(Allocator.Temp);
+            builder.Reset();
+                        
             m_EmployerQuery = builder.WithAll<WorkProvider, PrefabRef>()
                 .WithAny<Created, Updated>()
                 .WithNone<Game.Buildings.ServiceUpgrade, Deleted, Temp, Game.Objects.OutsideConnection>()
@@ -81,15 +90,21 @@ namespace BuildingOccupancyRebalancing.Systems
 
             m_active = false;
             m_endFrameBarrier = World.GetOrCreateSystemManaged<EndFrameBarrier>();
-            RequireAnyForUpdate(m_Query, m_EmployerQuery);            
+            RequireAnyForUpdate(m_UnderConstructionQuery, m_EmployerQuery);            
             World.GetOrCreateSystemManaged<ZoneSpawnSystem>().debugFastSpawn = true; // REMOVE FOR RELEASE
         }
 
         protected override void OnGameLoadingComplete(Purpose purpose, GameMode mode)
         {
-            base.OnGameLoadingComplete(purpose, mode);       
-            m_active = mode.IsGame();                 
-        }
+            base.OnGameLoadingComplete(purpose, mode);                                    
+            var justLoaded = !m_active && (purpose == Purpose.NewGame || purpose == Purpose.LoadGame); 
+            if (justLoaded) {
+                var commandBuffer = m_endFrameBarrier.CreateCommandBuffer().AsParallelWriter();
+                this.Dependency = UpdateResidences(commandBuffer, true);
+                m_endFrameBarrier.AddJobHandleForProducer(Dependency);
+            }         
+            m_active = mode.IsGame();                  
+        }        
 
         // private void CreateKeyBinding()
         // {
@@ -104,8 +119,7 @@ namespace BuildingOccupancyRebalancing.Systems
         //     UnityEngine.Debug.Log("You pressed the hotkey, very cool! Good job matey");
         // }
 
-        protected override void OnUpdate() {     
-            if (!m_active) return;               
+        private void UpdateHandlesAndLookups() {
             m_prefabRefhandle.Update(this);   
             m_officePropertyHandle.Update(this);
             m_residentialPropertyHandle.Update(this);
@@ -119,8 +133,9 @@ namespace BuildingOccupancyRebalancing.Systems
             m_workProviderHandle.Update(this);
             m_officePropertyLookup.Update(this);
             m_entityTypeHandle.Update(this);
+        }
 
-            var commandBuffer = m_endFrameBarrier.CreateCommandBuffer().AsParallelWriter();
+        private JobHandle UpdateResidences(EntityCommandBuffer.ParallelWriter commandBuffer, bool updateAll = false) {                        
             var residentialJob = new UpdateResidenceOccupancyJob {
                 commandBuffer = commandBuffer,
                 prefabRefhandle = m_prefabRefhandle,
@@ -133,9 +148,33 @@ namespace BuildingOccupancyRebalancing.Systems
                 zoneDataLookup = m_zoneDataLookup,
                 objectGeometryLookup = m_objectGeometryLookup,
                 buildingDataLookup = m_buildingDataLookup,                
-                randomSeed = RandomSeed.Next()         
+                randomSeed = RandomSeed.Next(),
+                updateAll = updateAll       
             };                
-            var residentialJobHandle = residentialJob.ScheduleParallel(m_Query, this.Dependency);
+            return residentialJob.ScheduleParallel(updateAll? m_GameStartupQuery : m_UnderConstructionQuery, this.Dependency);
+        }
+
+        protected override void OnUpdate() {     
+            if (!m_active) return;            
+            this.UpdateHandlesAndLookups();     
+
+            var commandBuffer = m_endFrameBarrier.CreateCommandBuffer().AsParallelWriter();
+            // var residentialJob = new UpdateResidenceOccupancyJob {
+            //     commandBuffer = commandBuffer,
+            //     prefabRefhandle = m_prefabRefhandle,
+            //     officePropertyHandle = m_officePropertyHandle,
+            //     residentialPropertyHandle = m_residentialPropertyHandle,
+            //     underConstructionHandle = m_underConstructionHandle,
+            //     renterHandle = m_renterHandle,
+            //     spawnableBuildingDataLookup = m_spawnableBuildingDataLookup,
+            //     buildingPropertyDataLookup = m_buildingPropertyDataLookup,
+            //     zoneDataLookup = m_zoneDataLookup,
+            //     objectGeometryLookup = m_objectGeometryLookup,
+            //     buildingDataLookup = m_buildingDataLookup,                
+            //     randomSeed = RandomSeed.Next(),
+            //     updateAll = m_justLoaded       
+            // };                
+            var residentialJobHandle = this.UpdateResidences(commandBuffer, false);//residentialJob.ScheduleParallel(m_UnderConstructionQuery, this.Dependency);
 
             commandBuffer = m_endFrameBarrier.CreateCommandBuffer().AsParallelWriter();
             var officeJob = new UpdateWorkProviderMaxWorkerJob {
@@ -145,12 +184,12 @@ namespace BuildingOccupancyRebalancing.Systems
                 objectGeometryLookup = m_objectGeometryLookup,
                 buildingDataLookup = m_buildingDataLookup,
                 entityTypeHandle = m_entityTypeHandle,
-                commandBuffer = commandBuffer        
+                commandBuffer = commandBuffer
             };
             var officeJobHandle = officeJob.ScheduleParallel(m_EmployerQuery, this.Dependency);          
 
             this.Dependency = JobHandle.CombineDependencies(residentialJobHandle, officeJobHandle);
-            m_endFrameBarrier.AddJobHandleForProducer(Dependency);            
+            m_endFrameBarrier.AddJobHandleForProducer(Dependency);                        
         }          
 
         [BurstCompile]
@@ -198,6 +237,7 @@ namespace BuildingOccupancyRebalancing.Systems
             public EntityCommandBuffer.ParallelWriter commandBuffer;
 
             public RandomSeed randomSeed;
+            public bool updateAll;
 
             [BurstCompile]
             public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
@@ -209,13 +249,16 @@ namespace BuildingOccupancyRebalancing.Systems
                 var isOffice = chunk.Has(ref officePropertyHandle);
                 if (!isResidential) {
                     return;
-                }            
+                }                
                 var random = randomSeed.GetRandom(1);                                                           
                 var prefabRefs = chunk.GetNativeArray(ref prefabRefhandle);                           
-                var underConstruction = chunk.GetNativeArray(ref underConstructionHandle);
-                for (int i = 0; i < underConstruction.Length; i++) {                        
-                    if (underConstruction[i].m_Progress < 100) continue;                                       
-                    var prefab = underConstruction[i].m_NewPrefab;    
+                var underConstruction = updateAll? new NativeArray<UnderConstruction>(0, Allocator.Temp) : chunk.GetNativeArray(ref underConstructionHandle);
+                if (updateAll) {
+                    Plugin.Log.LogInfo($"Updating {prefabRefs.Count()} Items");
+                }
+                for (int i = 0; i < prefabRefs.Length; i++) {                        
+                    if (!updateAll && underConstruction[i].m_Progress < 100) continue;                                       
+                    var prefab = updateAll? prefabRefs[i].m_Prefab : underConstruction[i].m_NewPrefab;    
                     if (prefab == Entity.Null) prefab = prefabRefs[i].m_Prefab;
                     if (prefab == Entity.Null) {
                         Plugin.Log.LogInfo("Prefab is null!");

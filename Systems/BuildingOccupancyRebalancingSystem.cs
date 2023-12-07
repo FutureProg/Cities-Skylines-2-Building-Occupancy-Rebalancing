@@ -2,14 +2,16 @@
 using Game;
 using Game.Buildings;
 using Game.Common;
+using Game.Companies;
 using Game.Objects;
 using Game.Prefabs;
 using Game.Simulation;
+using Game.Tools;
 using Unity.Burst;
 using Unity.Burst.Intrinsics;
 using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Entities;
-using Unity.Entities.UniversalDelegates;
 using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
@@ -20,16 +22,20 @@ namespace BuildingOccupancyRebalancing.Systems
     {        
 
         EntityQuery m_Query; 
+        EntityQuery m_EmployerQuery;
         ComponentTypeHandle<PrefabRef> m_prefabRefhandle;        
         ComponentTypeHandle<OfficeProperty> m_officePropertyHandle;        
         ComponentTypeHandle<ResidentialProperty> m_residentialPropertyHandle;
         ComponentTypeHandle<UnderConstruction> m_underConstructionHandle;
+        ComponentTypeHandle<WorkProvider> m_workProviderHandle;
+        EntityTypeHandle m_entityTypeHandle;
 
         ComponentLookup<BuildingPropertyData> m_buildingPropertyDataLookup;
         ComponentLookup<SpawnableBuildingData> m_spawnableBuildingDataLookup;
         ComponentLookup<ZoneData> m_zoneDataLookup;
         ComponentLookup<ObjectGeometryData> m_objectGeometryLookup;
         ComponentLookup<BuildingData> m_buildingDataLookup; 
+        ComponentLookup<OfficeProperty> m_officePropertyLookup;
         BufferTypeHandle<Renter> m_renterHandle;       
 
         private EndFrameBarrier m_endFrameBarrier;
@@ -47,32 +53,42 @@ namespace BuildingOccupancyRebalancing.Systems
             EntityQueryBuilder builder = new EntityQueryBuilder(Allocator.Temp);            
             
             m_Query = builder.WithAll<UnderConstruction, PrefabRef>()
-                .WithAny<ResidentialProperty, OfficeProperty>()                
-                .Build(this.EntityManager);            
+                .WithAny<ResidentialProperty>()//, OfficeProperty>()                
+                .Build(this.EntityManager);   
+            builder.Dispose();
+            
+            builder = new EntityQueryBuilder(Allocator.Temp);
+            m_EmployerQuery = builder.WithAll<WorkProvider, PrefabRef>()
+                .WithAny<Created, Updated>()
+                .WithNone<Game.Buildings.ServiceUpgrade, Deleted, Temp, Game.Objects.OutsideConnection>()
+                .Build(this.EntityManager);  // From WorkplaceInitializationSystem
+            builder.Dispose();
 
             m_prefabRefhandle = GetComponentTypeHandle<PrefabRef>(true);
             m_officePropertyHandle = GetComponentTypeHandle<OfficeProperty>(true);
             m_residentialPropertyHandle = GetComponentTypeHandle<ResidentialProperty>(true);
             m_underConstructionHandle = GetComponentTypeHandle<UnderConstruction>(true);
             m_renterHandle = GetBufferTypeHandle<Renter>(false);
+            m_workProviderHandle = GetComponentTypeHandle<WorkProvider>(false);
+            m_entityTypeHandle = GetEntityTypeHandle();
 
             m_buildingPropertyDataLookup = GetComponentLookup<BuildingPropertyData>(false);
             m_spawnableBuildingDataLookup = GetComponentLookup<SpawnableBuildingData>(true);
             m_zoneDataLookup = GetComponentLookup<ZoneData>(true);
             m_objectGeometryLookup = GetComponentLookup<ObjectGeometryData>(true);
-            m_buildingDataLookup = GetComponentLookup<BuildingData>(true);                
+            m_buildingDataLookup = GetComponentLookup<BuildingData>(true);
+            m_officePropertyLookup = GetComponentLookup<OfficeProperty>(true);                
 
             m_active = false;
             m_endFrameBarrier = World.GetOrCreateSystemManaged<EndFrameBarrier>();
-            RequireForUpdate(m_Query);            
+            RequireAnyForUpdate(m_Query, m_EmployerQuery);            
             World.GetOrCreateSystemManaged<ZoneSpawnSystem>().debugFastSpawn = true; // REMOVE FOR RELEASE
         }
 
         protected override void OnGameLoadingComplete(Purpose purpose, GameMode mode)
         {
             base.OnGameLoadingComplete(purpose, mode);       
-            m_active = mode.IsGame();     
-            Debug.Log("Loaded");   
+            m_active = mode.IsGame();                 
         }
 
         // private void CreateKeyBinding()
@@ -100,9 +116,12 @@ namespace BuildingOccupancyRebalancing.Systems
             m_objectGeometryLookup.Update(this);
             m_buildingDataLookup.Update(this);      
             m_renterHandle.Update(this);      
+            m_workProviderHandle.Update(this);
+            m_officePropertyLookup.Update(this);
+            m_entityTypeHandle.Update(this);
 
-            var commandBuffer = m_endFrameBarrier.CreateCommandBuffer().AsParallelWriter();             
-            var job = new UpdateResidenceOccupancyJob {
+            var commandBuffer = m_endFrameBarrier.CreateCommandBuffer().AsParallelWriter();
+            var residentialJob = new UpdateResidenceOccupancyJob {
                 commandBuffer = commandBuffer,
                 prefabRefhandle = m_prefabRefhandle,
                 officePropertyHandle = m_officePropertyHandle,
@@ -115,10 +134,52 @@ namespace BuildingOccupancyRebalancing.Systems
                 objectGeometryLookup = m_objectGeometryLookup,
                 buildingDataLookup = m_buildingDataLookup,                
                 randomSeed = RandomSeed.Next()         
-            };                        
-            this.Dependency = job.ScheduleParallel(m_Query, this.Dependency);            
+            };                
+            var residentialJobHandle = residentialJob.ScheduleParallel(m_Query, this.Dependency);
+
+            commandBuffer = m_endFrameBarrier.CreateCommandBuffer().AsParallelWriter();
+            var officeJob = new UpdateWorkProviderMaxWorkerJob {
+                prefabRefHandle = m_prefabRefhandle,
+                workProviderHandle = m_workProviderHandle,
+                officePropertyLookup = m_officePropertyLookup,
+                objectGeometryLookup = m_objectGeometryLookup,
+                buildingDataLookup = m_buildingDataLookup,
+                entityTypeHandle = m_entityTypeHandle,
+                commandBuffer = commandBuffer        
+            };
+            var officeJobHandle = officeJob.ScheduleParallel(m_EmployerQuery, this.Dependency);          
+
+            this.Dependency = JobHandle.CombineDependencies(residentialJobHandle, officeJobHandle);
             m_endFrameBarrier.AddJobHandleForProducer(Dependency);            
-        }              
+        }          
+
+        [BurstCompile]
+        public struct UpdateWorkProviderMaxWorkerJob : IJobChunk {
+            public ComponentTypeHandle<PrefabRef> prefabRefHandle;
+            public ComponentTypeHandle<WorkProvider> workProviderHandle;
+
+            public ComponentLookup<OfficeProperty> officePropertyLookup;
+            public ComponentLookup<ObjectGeometryData> objectGeometryLookup;
+            public ComponentLookup<BuildingData> buildingDataLookup;
+
+            public EntityCommandBuffer.ParallelWriter commandBuffer;
+            public EntityTypeHandle entityTypeHandle;
+
+            public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask) {                
+                var prefabList = chunk.GetNativeArray(ref prefabRefHandle);
+                var workProviderList = chunk.GetNativeArray(ref workProviderHandle);   
+                var entities = chunk.GetNativeArray(entityTypeHandle);
+                for (int i = 0; i < prefabList.Length; i++) {
+                    Plugin.Log.LogInfo("Iterate");
+                    var prefab = prefabList[i];
+                    var workProvider = workProviderList[i];
+                    workProvider.m_MaxWorkers = 500;
+                    var entity = entities[i];
+                    commandBuffer.SetComponent(unfilteredChunkIndex, entity, workProvider);
+                } 
+            }
+            
+        }    
 
         [BurstCompile]
         public struct UpdateResidenceOccupancyJob : IJobChunk

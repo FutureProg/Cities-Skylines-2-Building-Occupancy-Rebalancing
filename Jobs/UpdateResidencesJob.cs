@@ -65,7 +65,7 @@ namespace BuildingOccupancyRebalancing.Jobs {
                     changed += 1;                               
                 }   
             }                 
-            Plugin.Log.LogInfo($"Successfully Updated {changed} Items!");              
+            // Plugin.Log.LogInfo($"Successfully Updated {changed} Items!");              
         }
 
         BuildingPropertyData UpdateResidential(int unfilteredChunkIndex, float width, float length, float height, Unity.Mathematics.Random random, 

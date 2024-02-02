@@ -16,6 +16,10 @@ using Game.UI.InGame;
 using Game.Buildings;
 using Colossal.Entities;
 using Game.Companies;
+using Game.Simulation;
+using Game.Agents;
+using Game.Net;
+using Unity.Mathematics;
 
 namespace BuildingOccupancyRebalancing.Patches {
 
@@ -72,11 +76,71 @@ namespace BuildingOccupancyRebalancing.Patches {
         }
     }
 
+    [HarmonyPatch(typeof(CommercialFindPropertySystem), "Evaluate")]
+    class CommercialFindPropertySystem_Evaluate_Postfix {
+
+        static void Postfix(ref float __result, 
+        Entity company, Entity property, ref ServiceCompanyData service, 
+        ref IndustrialProcessData process, ref PropertySeeker propertySeeker, 
+        ComponentLookup<Building> buildings, ComponentLookup<PrefabRef> prefabFromEntity, 
+        ComponentLookup<BuildingData> buildingDatas, BufferLookup<ResourceAvailability> availabilities, 
+        ComponentLookup<LandValue> landValues, ResourcePrefabs resourcePrefabs, 
+        ComponentLookup<ResourceData> resourceDatas, ComponentLookup<BuildingPropertyData> propertyDatas, 
+        ComponentLookup<SpawnableBuildingData> spawnableDatas, BufferLookup<Renter> renterBuffers, 
+        ComponentLookup<CommercialCompany> companies, ref ZonePreferenceData preferences) {                
+            if (__result == -1f && buildings.HasComponent(property)) 
+			{
+				Building building = buildings[property];
+				Entity prefab = prefabFromEntity[property].m_Prefab;
+				BuildingData buildingData = buildingDatas[prefab];
+				BuildingPropertyData buildingPropertyData = propertyDatas[prefab];
+				DynamicBuffer<Renter> dynamicBuffer = renterBuffers[property];
+                // bool failedUnpatched = false;
+				// for (int i = 0; i < dynamicBuffer.Length; i++)
+				// {
+				// 	if (companies.HasComponent(dynamicBuffer[i].m_Renter))
+				// 	{
+				// 		failedUnpatched = true;
+                //         break;
+				// 	}
+				// }
+                // if (!failedUnpatched) {
+                //     return;
+                // }
+
+                float num = 500f;
+				if (availabilities.HasBuffer(building.m_RoadEdge))
+				{
+					DynamicBuffer<ResourceAvailability> availabilities2 = availabilities[building.m_RoadEdge];
+					float num2 = 0f;
+					if (landValues.HasComponent(building.m_RoadEdge))
+					{
+						num2 = landValues[building.m_RoadEdge].m_LandValue;
+					}
+					float spaceMultiplier = buildingPropertyData.m_SpaceMultiplier;
+					int level = (int)spawnableDatas[prefab].m_Level;
+					num = ZoneEvaluationUtils.GetCommercialScore(availabilities2, building.m_CurvePosition, ref preferences, num2 / (spaceMultiplier * (1f + 0.5f * (float)level) * service.m_MaxWorkersPerCell), process.m_Output.m_Resource == Resource.Lodging);
+					AvailableResource availableResourceSupply = EconomyUtils.GetAvailableResourceSupply(process.m_Input1.m_Resource);
+					if (availableResourceSupply != AvailableResource.Count)
+					{
+						float weight = EconomyUtils.GetWeight(process.m_Input1.m_Resource, resourcePrefabs, ref resourceDatas);
+						float marketPrice = EconomyUtils.GetMarketPrice(process.m_Output.m_Resource, resourcePrefabs, ref resourceDatas);
+						float num3 = weight * (float)process.m_Input1.m_Amount / ((float)process.m_Output.m_Amount * marketPrice);
+						num -= 200f * num3 / math.max(1f, NetUtils.GetAvailability(availabilities2, availableResourceSupply, building.m_CurvePosition));
+					}
+				}
+				__result = num;
+            }            
+        }
+
+    }
+
     [HarmonyPatch(typeof(DeveloperInfoUISystem), "HasCompany")]
     class DeveloperInfoUISystem_HasCompany_Prefix {
 
         static bool Prefix(DeveloperInfoUISystem __instance, ref bool __result, Entity entity, Entity prefab) {           
             int renterCount = 0; 
+            Plugin.Log.LogInfo("Opening System");
 			if (__instance.EntityManager.HasComponent<Renter>(entity) && __instance.EntityManager.HasComponent<BuildingPropertyData>(prefab) 
                 && __instance.EntityManager.TryGetBuffer<Renter>(entity, true, out var dynamicBuffer) 
                 && dynamicBuffer.Length > 0)
@@ -89,10 +153,14 @@ namespace BuildingOccupancyRebalancing.Patches {
 					}
 				}
                 Plugin.Log.LogInfo($"Company Renter Count: {renterCount}");
+			}  
+            Plugin.Log.LogInfo($"Property on Market?: {__instance.EntityManager.HasComponent<PropertyOnMarket>(entity)}");
+            Plugin.Log.LogInfo($"Property to be on Market?: {__instance.EntityManager.HasComponent<PropertyToBeOnMarket>(entity)}");
+            if (__instance.EntityManager.HasComponent<BuildingPropertyData>(prefab)) {
                 BuildingPropertyData propData = __instance.EntityManager.GetComponentData<BuildingPropertyData>(prefab);
                 Plugin.Log.LogInfo($"Property Count: {propData.CountProperties()}");
-                Plugin.Log.LogInfo($"==========");
-			}            			
+                Plugin.Log.LogInfo($"==========");  
+            }		
             return true;
         }
 

@@ -2,13 +2,15 @@
 BEPINEX_VERSION = 5
 
 clean:
-	@dotnet clean
+	@dotnet clean BuildingOccupancyRebalancing.csproj
 
 restore:
-	@dotnet restore
+	@dotnet restore BuildingOccupancyRebalancing.csproj
 
 build: clean restore
-	@dotnet build /p:BepInExVersion=$(BEPINEX_VERSION)
+	@dotnet build BuildingOccupancyRebalancing.csproj /p:BepInExVersion=$(BEPINEX_VERSION)
+	@cmd /c copy /y "bin\Debug\netstandard2.1\BuildingOccupancyRebalancing.dll" "E:\SteamLibrary\steamapps\common\Cities Skylines II\BepInEx\plugins\BuildingOccupancyRebalancing\BuildingOccupancyRebalancing.dll"
+	@cmd /c copy /y "bin\Debug\netstandard2.1\0Harmony.dll" "E:\SteamLibrary\steamapps\common\Cities Skylines II\BepInEx\plugins\BuildingOccupancyRebalancing\0Harmony.dll"
 
 run: 
 	E:\SteamLibrary\steamapps\common\Cities Skylines II\Cities2.exe -developerMode

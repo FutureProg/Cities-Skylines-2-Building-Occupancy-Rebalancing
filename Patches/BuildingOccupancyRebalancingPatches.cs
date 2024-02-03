@@ -20,6 +20,8 @@ using Game.Simulation;
 using Game.Agents;
 using Game.Net;
 using Unity.Mathematics;
+using Game.Citizens;
+using CompanyInitializeSystem = Game.Citizens.CompanyInitializeSystem;
 
 namespace BuildingOccupancyRebalancing.Patches {
 
@@ -37,6 +39,7 @@ namespace BuildingOccupancyRebalancing.Patches {
             // Here we add our custom ECS System to the game's ECS World, so it's "online" at runtime
             // ((ComponentSystemBase)__instance).World.GetOrCreateSystemManaged<UpdateSystem>().UpdateAt<BuildingOccupancyRebalancingSystem>(SystemUpdatePhase.GameSimulation);
             ((ComponentSystemBase)__instance).World.GetOrCreateSystemManaged<UpdateSystem>().UpdateAt<OccupanyPrefabInitSystem>(SystemUpdatePhase.PrefabUpdate);
+            ((ComponentSystemBase)__instance).World.GetOrCreateSystemManaged<UpdateSystem>().UpdateAt<PatchCommercialFindPropertySystem>(SystemUpdatePhase.GameSimulation);
         }
     }
 
@@ -76,10 +79,28 @@ namespace BuildingOccupancyRebalancing.Patches {
         }
     }
 
+    [HarmonyPatch(typeof(CommercialFindPropertySystem), "OnUpdate")]
+    class CommercialFindPropertySystem_OnUpdate_Prefix {
+
+        static void Prefix(ref CommercialFindPropertySystem __instance, EntityQuery ___m_CommerceQuery, EntityQuery ___m_FreePropertyQuery) {
+            Plugin.Log.LogInfo($"Running Commercial Find Property System On Update companies: {___m_CommerceQuery.CalculateEntityCount()}, free prop: {___m_FreePropertyQuery.CalculateEntityCount()}");             
+        }
+
+    }
+
+    [HarmonyPatch(typeof(CompanyInitializeSystem), "OnUpdate")]
+    class CompanyInitializeSystem_OnUpdate_Prefix {
+
+        static void Prefix(ref CompanyInitializeSystem __instance, EntityQuery ___m_CreatedGroup) {
+            Plugin.Log.LogInfo($"Running CompanyInitializeSystem On Update {___m_CreatedGroup.CalculateEntityCount()}");             
+        }
+
+    }
+
     [HarmonyPatch(typeof(CommercialFindPropertySystem), "Evaluate")]
     class CommercialFindPropertySystem_Evaluate_Postfix {
 
-        static void Postfix(ref float __result, 
+        static bool Prefix(ref float __result, 
         Entity company, Entity property, ref ServiceCompanyData service, 
         ref IndustrialProcessData process, ref PropertySeeker propertySeeker, 
         ComponentLookup<Building> buildings, ComponentLookup<PrefabRef> prefabFromEntity, 
@@ -87,26 +108,27 @@ namespace BuildingOccupancyRebalancing.Patches {
         ComponentLookup<LandValue> landValues, ResourcePrefabs resourcePrefabs, 
         ComponentLookup<ResourceData> resourceDatas, ComponentLookup<BuildingPropertyData> propertyDatas, 
         ComponentLookup<SpawnableBuildingData> spawnableDatas, BufferLookup<Renter> renterBuffers, 
-        ComponentLookup<CommercialCompany> companies, ref ZonePreferenceData preferences) {                
-            if (__result == -1f && buildings.HasComponent(property)) 
+        ComponentLookup<CommercialCompany> companies, ref ZonePreferenceData preferences) {    
+            Plugin.Log.LogInfo("Running Prefix");            
+            if (buildings.HasComponent(property)) 
 			{
 				Building building = buildings[property];
 				Entity prefab = prefabFromEntity[property].m_Prefab;
 				BuildingData buildingData = buildingDatas[prefab];
 				BuildingPropertyData buildingPropertyData = propertyDatas[prefab];
 				DynamicBuffer<Renter> dynamicBuffer = renterBuffers[property];
-                // bool failedUnpatched = false;
-				// for (int i = 0; i < dynamicBuffer.Length; i++)
-				// {
-				// 	if (companies.HasComponent(dynamicBuffer[i].m_Renter))
-				// 	{
-				// 		failedUnpatched = true;
-                //         break;
-				// 	}
-				// }
-                // if (!failedUnpatched) {
-                //     return;
-                // }
+                bool failedUnpatched = false;
+				for (int i = 0; i < dynamicBuffer.Length; i++)
+				{
+					if (companies.HasComponent(dynamicBuffer[i].m_Renter))
+					{
+						failedUnpatched = true;
+                        break;
+					}
+				}
+                if (!failedUnpatched) {
+                    return true;
+                }
 
                 float num = 500f;
 				if (availabilities.HasBuffer(building.m_RoadEdge))
@@ -130,7 +152,9 @@ namespace BuildingOccupancyRebalancing.Patches {
 					}
 				}
 				__result = num;
-            }            
+                return false;
+            }      
+            return true;      
         }
 
     }
